@@ -33,7 +33,9 @@ class Tire:
         self.calculate_coefficients(f_z)
 
         lateral_force = self._magic_formula_core(alpha, self.params['y'])
-        longitudinal_force = self._magic_formula_core(alpha, self.params['x'])
+        longitudinal_force = self._magic_formula_core(kappa, self.params['x'])
+
+        return lateral_force, longitudinal_force
 
     def calculate_coefficients(self, f_z):
         ## Determine D (peak load) from mu and load
