@@ -1,6 +1,12 @@
 import numpy as np
 
 class Tire:
+    """
+    Class that holds tire parameters and determines forces based on applied conditions
+
+    
+    """
+
     def __init__(self, name, mu_peak, cornering_stiffness_per_deg, longitudinal_stiffness, load_sensitivity_n, f_z0,  c=1.4, e=-0.1):
         self.name = name
         self.mu_peak = mu_peak
@@ -54,6 +60,3 @@ class Tire:
 
         b_long = c_kappa_current / (self.params['x']['C'] * d) if d > 0 else 0
         self.params['x']['B'] = b_long
-
-
-    def
