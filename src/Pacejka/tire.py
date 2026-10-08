@@ -35,11 +35,14 @@ class Tire:
         argument = c * np.arctan(term - e * (term - inner_atan))
         return d * np.sin(argument)
 
-    def calculate_forces(self, f_z, alpha, kappa):
+    def calculate_forces(self, f_z, alpha, kappa, friction_circle=True):
         self.calculate_coefficients(f_z)
 
         lateral_force = self._magic_formula_core(alpha, self.params['y'])
         longitudinal_force = self._magic_formula_core(kappa, self.params['x'])
+
+        if friction_circle:
+            longitudinal_force, lateral_force = self.friction_circle(longitudinal_force, lateral_force, f_z)
 
         return lateral_force, longitudinal_force
 
@@ -60,3 +63,26 @@ class Tire:
 
         b_long = c_kappa_current / (self.params['x']['C'] * d) if d > 0 else 0
         self.params['x']['B'] = b_long
+
+    def friction_circle(self, fx_raw, fy_raw, f_z):
+        """
+        Limits total force to the friction circle based on mu_peak and load
+
+        :param fx_raw:
+        :param fy_raw:
+        :param f_z:
+        :return fx_final, fy_final:
+        """
+        f_max = self.mu_peak * f_z
+        vector_magnitude = np.sqrt(fx_raw ** 2 + fy_raw ** 2)
+
+        # If total demand exceeds physical grip, scale back to the circle boundary
+        if vector_magnitude > f_max and vector_magnitude > 0:
+            scaling_factor = f_max / vector_magnitude
+            fx_final = fx_raw * scaling_factor
+            fy_final = fy_raw * scaling_factor
+        else:
+            fx_final = fx_raw
+            fy_final = fy_raw
+
+        return fx_final, fy_final
