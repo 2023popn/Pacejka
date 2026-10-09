@@ -7,7 +7,7 @@ class Tire:
     
     """
 
-    def __init__(self, name, mu_peak, cornering_stiffness_per_deg, longitudinal_stiffness, load_sensitivity_n, f_z0,  c=1.4, e=-0.1):
+    def __init__(self, name, mu_peak, cornering_stiffness_per_deg=None, longitudinal_stiffness=None, load_sensitivity_n=None, f_z0=None, b_x=None, c_x=1.4, e_x=0.1, b_y=None, c_y=1.4, e_y=-0.1, b_constant=False):
         self.name = name
         self.mu_peak = mu_peak
         self.cornering_stiffness_per_deg = cornering_stiffness_per_deg
@@ -16,10 +16,26 @@ class Tire:
         self.f_z0 = f_z0
 
         self.params = {
-            'x': {'B': 10.0, 'C': 1.6, 'D' : 0, 'E': 0.1},  # Longitudinal
-            'y': {'B': 8.0, 'C': 1.4, 'D' : 0, 'E': -0.1},  # Lateral
+            'x': {'B': 10.0, 'C': c_x, 'D' : 0, 'E': e_x},  # Longitudinal
+            'y': {'B': 8.0, 'C': c_y, 'D' : 0, 'E': e_y},  # Lateral
             # 'z': {'B': 9.0, 'C': 2.0, 'D' : 0, 'E': 0.5}  # Aligning Moment
         }
+
+    @classmethod
+    def from_constants(cls, compound_name, mu_base, b_x, c_x, e_x, b_y=None, c_y=None, e_y=None):
+        """Initializer for constants only. Assumes constant b"""
+        if b_y is None:
+            b_y = b_x
+        if c_y is None:
+            c_y = c_x
+        if e_y is None:
+            e_y = e_x
+
+        return cls(compound_name, mu_base, b_x=b_x, c_x=c_x, e_x=e_x, b_y=b_y, c_y=c_y, e_y=e_y, b_constant=True)
+
+    @classmethod
+    def from_macro_properties(cls, compound_name, mu_base, corner_stiffness_per_deg, longitudinal_stiffness, load_sensitivity_n=0.9, f_z0=150):
+        return cls(compound_name, mu_base, cornering_stiffness_per_deg=corner_stiffness_per_deg, longitudinal_stiffness=longitudinal_stiffness, load_sensitivity_n=load_sensitivity_n, f_z0=f_z0)
 
     def _magic_formula_core(self, x_input, params:dict):
         """
