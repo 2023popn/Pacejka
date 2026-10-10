@@ -7,17 +7,18 @@ class Tire:
     
     """
 
-    def __init__(self, name, mu_peak, cornering_stiffness_per_deg=None, longitudinal_stiffness=None, load_sensitivity_n=None, f_z0=None, b_x=None, c_x=1.4, e_x=0.1, b_y=None, c_y=1.4, e_y=-0.1, b_constant=False):
+    def __init__(self, name, mu_peak, cornering_stiffness_per_deg=None, longitudinal_stiffness=None, load_sensitivity_n=None, f_z0=None, b_x=None, c_x=1.4, e_x=0.1, b_y=None, c_y=1.4, e_y=-0.1, constant_b=False):
         self.name = name
         self.mu_peak = mu_peak
         self.cornering_stiffness_per_deg = cornering_stiffness_per_deg
         self.longitudinal_stiffness = longitudinal_stiffness
         self.load_sensitivity_n = load_sensitivity_n
         self.f_z0 = f_z0
+        self.constant_b = constant_b
 
         self.params = {
-            'x': {'B': 10.0, 'C': c_x, 'D' : 0, 'E': e_x},  # Longitudinal
-            'y': {'B': 8.0, 'C': c_y, 'D' : 0, 'E': e_y},  # Lateral
+            'x': {'B': b_x, 'C': c_x, 'D' : 0, 'E': e_x},  # Longitudinal
+            'y': {'B': b_y, 'C': c_y, 'D' : 0, 'E': e_y},  # Lateral
             # 'z': {'B': 9.0, 'C': 2.0, 'D' : 0, 'E': 0.5}  # Aligning Moment
         }
 
@@ -52,7 +53,10 @@ class Tire:
         return d * np.sin(argument)
 
     def calculate_forces(self, f_z, alpha, kappa, friction_circle=True):
-        self.calculate_coefficients(f_z)
+        self.calculate_d(f_z)
+
+        if self.constant_b:
+            self.calculate_b(f_z, alpha)
 
         lateral_force = self._magic_formula_core(alpha, self.params['y'])
         longitudinal_force = self._magic_formula_core(kappa, self.params['x'])
@@ -62,12 +66,13 @@ class Tire:
 
         return lateral_force, longitudinal_force
 
-    def calculate_coefficients(self, f_z):
+    def calculate_d(self, f_z):
         ## Determine D (peak load) from mu and load
         mu_effective = self.mu_peak * pow(f_z / self.f_z0, self.load_sensitivity_n - 1)
         d = mu_effective * f_z
         self.params['x']['D'] = self.params['y']['D'] = d # Assuming uniform coefficient of friction
 
+    def calculate_b(self, f_z, d):
         ## Determine B (stiffness factor) using cornering and longitudinal stiffness (C_alpha and C_kappa)
         c_alpha_current_deg = self.cornering_stiffness_per_deg * ((f_z / self.f_z0) ** self.load_sensitivity_n)
         c_alpha_rad = c_alpha_current_deg * (180.0 / np.pi)
