@@ -15,21 +15,21 @@ The only dependency is numpy. To run the plotting tests too, install the `test` 
 The package is installed as `pacejka` and imported as `Pacejka`:
 
 ```python
-from Pacejka import Tire
+from pacejka import Tire
 ```
 
 ## Quick start
 
 ```python
-from Pacejka import Tire
+from pacejka import Tire
 
 tire = Tire.from_macro_properties(
     "Hoosier R55A",
-    mu_base=1.6,                      # peak friction coefficient at the reference load
-    cornering_stiffness_per_deg=25.0, # lateral force per degree of slip angle (small angles)
-    longitudinal_stiffness=2000.0,    # longitudinal force per unit slip ratio (small slip)
-    load_sensitivity_n=0.9,           # how much grip per unit load falls as load rises
-    f_z0=150.0,                       # reference load the stiffnesses are quoted at
+    mu_base=1.6,  # peak friction coefficient at the reference load
+    cornering_stiffness_per_deg=25.0,  # lateral force per degree of slip angle (small angles)
+    longitudinal_stiffness=2000.0,  # longitudinal force per unit slip ratio (small slip)
+    load_sensitivity_n=0.9,  # how much grip per unit load falls as load rises
+    f_z0=150.0,  # reference load the stiffnesses are quoted at
 )
 
 fy, fx = tire.calculate_forces(f_z=150.0, alpha=4.0, kappa=0.05, alpha_unit="deg")
@@ -203,7 +203,7 @@ B = stiffness * (Fz / Fz0) ** n / (C * D)         from the small-slip stiffness
 
 ```bash
 git clone https://github.com/2023popn/Pacejka
-cd Pacejka
+cd pacejka
 pip install -e ".[test]"
 pytest
 ```

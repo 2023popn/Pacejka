@@ -1,4 +1,4 @@
-"""Tire force model based on the Pacejka "magic formula"."""
+"""Tire force model based on the pacejka "magic formula"."""
 
 from dataclasses import dataclass
 from typing import Optional, Tuple, Union

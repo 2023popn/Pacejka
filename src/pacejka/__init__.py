@@ -1,4 +1,4 @@
-"""Pacejka: tire force calculations using the Pacejka magic formula."""
+"""pacejka: tire force calculations using the pacejka magic formula."""
 
 from .tire import AxisShape, MagicFormulaCoefficients, Tire
 

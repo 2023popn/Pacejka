@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from Pacejka import Tire
+from pacejka import Tire
 
 
 def pytest_addoption(parser):

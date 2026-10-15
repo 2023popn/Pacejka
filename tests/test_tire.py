@@ -8,7 +8,7 @@ import warnings
 import numpy as np
 import pytest
 
-from Pacejka import AxisShape, MagicFormulaCoefficients, Tire
+from pacejka import AxisShape, MagicFormulaCoefficients, Tire
 
 from conftest import CORNERING_PER_DEG, F_Z0, LOAD_SENSITIVITY, LONGITUDINAL, MU
 
