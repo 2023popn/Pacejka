@@ -1,0 +1,4 @@
+include LICENSE README.md
+recursive-include tests *.py
+prune sweep_output
+global-exclude __pycache__ *.py[cod]

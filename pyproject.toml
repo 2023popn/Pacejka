@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pacejka"
+dynamic = ["version"]
+description = "Calculate tire forces with the Pacejka magic formula"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "2023popn" }]
+keywords = ["tire", "pacejka", "magic formula", "vehicle dynamics", "motorsport"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Education",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+dependencies = ["numpy>=1.20"]
+
+[project.optional-dependencies]
+plots = ["matplotlib>=3.5"]
+test = ["pytest>=7", "matplotlib>=3.5"]
+
+[project.urls]
+Homepage = "https://github.com/2023popn/Pacejka"
+Issues = "https://github.com/2023popn/Pacejka/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "Pacejka.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+Pacejka = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "sweep: saves a plot of a parameter sweep (needs matplotlib); deselect with -m 'not sweep'",
+]
