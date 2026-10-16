@@ -53,7 +53,7 @@ jobs:
       - name: Check the release tag matches the package version
         if: github.event_name == 'release'
         run: |
-          version=$(python -c "import re, pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('src/Pacejka/__init__.py').read_text()).group(1))")
+          version=$(python -c "import re, pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('src/pacejka/__init__.py').read_text()).group(1))")
           tag="${GITHUB_REF_NAME#v}"
           if [ "$version" != "$tag" ]; then
             echo "Release tag '$GITHUB_REF_NAME' does not match package version '$version'."
