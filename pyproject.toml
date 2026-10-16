@@ -36,13 +36,13 @@ Homepage = "https://github.com/2023popn/Pacejka"
 Issues = "https://github.com/2023popn/Pacejka/issues"
 
 [tool.setuptools.dynamic]
-version = { attr = "Pacejka.__version__" }
+version = { attr = "pacejka.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-Pacejka = ["py.typed"]
+pacejka = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
