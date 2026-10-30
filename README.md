@@ -177,7 +177,67 @@ print(lateral)
 MagicFormulaCoefficients(b=4.263078832818626, c=1.4, d=240.0, e=-0.1)
 ```
 
-These are immutable and freshly built on every call. A `Tire` never changes when you ask it for forces, so one tire can safely be shared between threads. The fixed settings that belong to the tire are on `tire.longitudinal` and `tire.lateral`, for example `AxisShape(c=1.4, e=-0.1, b=None)`.
+These are immutable and freshly built on every call. A `Tire` never changes when you ask it for forces, so one stateless tire can safely be shared between threads (see [Temperature and pressure](#temperature-and-pressure) for tires that have state). The fixed settings that belong to the tire are on `tire.longitudinal` and `tire.lateral`, for example `AxisShape(c=1.4, e=-0.1, b=None)`.
+
+## Temperature and pressure
+
+A tire can track its own temperature and pressure, and its grip and stiffness follow them. Give the tire thermal and pressure settings when you build it:
+
+```python
+from pacejka import PressureParams, ThermalParams, Tire
+
+tire = Tire.from_macro_properties(
+    "Kart tire",
+    mu_base=1.3,
+    cornering_stiffness_per_deg=400.0,  # N per degree
+    longitudinal_stiffness=9000.0,  # N per unit slip ratio
+    load_sensitivity_n=0.9,
+    f_z0=500.0,  # N
+    thermal=ThermalParams(),
+    pressure=PressureParams(),
+)
+print(f"{tire.temperature - 273.15:.1f} C, {tire.pressure / 1000:.1f} kPa")
+fy, fx = tire.calculate_forces(f_z=500.0, alpha=0.08, kappa=0.02)
+print(f"lateral = {fy:.1f}, longitudinal = {fx:.1f}")
+```
+
+```
+20.0 C, 80.0 kPa
+lateral = 388.2, longitudinal = 173.5
+```
+
+Asking for forces never changes the tire. To let it heat up, call `update` with the same conditions you gave `calculate_forces`, plus the time step and the speed:
+
+```python
+for _ in range(240):  # 60 s of steady cornering
+    tire.update(dt=0.25, f_z=500.0, alpha=0.08, kappa=0.02, speed=20.0)
+
+print(f"{tire.temperature - 273.15:.1f} C, {tire.pressure / 1000:.1f} kPa")
+fy, fx = tire.calculate_forces(f_z=500.0, alpha=0.08, kappa=0.02)
+print(f"lateral = {fy:.1f}, longitudinal = {fx:.1f}")
+```
+
+```
+26.6 C, 84.1 kPa
+lateral = 412.0, longitudinal = 173.7
+```
+
+`tire.reset()` returns to the starting state and `tire.copy()` gives an independent tire with its own state.
+
+**What it models.** A single lumped temperature that rises with the power dissipated by sliding and falls through cooling that grows with speed. Pressure is derived from the temperature with the gas law, starting from the fill pressure you give. Temperature and pressure then scale the peak friction, the stiffnesses and the load sensitivity, and every scale factor is 1.0 at the reference temperature and pressure (the conditions your base tire parameters were measured at). Grip and stiffness change independently of each other.
+
+| You pass | What happens |
+|---|---|
+| nothing | A plain tire with no state, exactly as before |
+| `thermal` | Temperature evolves and affects grip and stiffness. `tire.pressure` is `None` |
+| `thermal` and `pressure` | The full model, with pressure following temperature |
+| `pressure` only | A `PressureWithoutThermalWarning` is raised. The pressure stays constant at `fill_pressure_pa`, so give the pressure the tire runs at, not the cold fill pressure. `update` does nothing |
+
+**Units.** Anything involving temperature or pressure is SI: kelvin, gauge pascals, seconds, newtons (the heating needs real forces), and metres per second. Without a thermal model the library still works in any consistent force unit.
+
+**The defaults are placeholders.** Every default in `ThermalParams` and `PressureParams` was chosen to give plausible behavior for a small kart tire. None comes from measured data, so set your own values before relying on the results. The plots from `pytest` (`thermal_factors_vs_temperature`, `pressure_factors_vs_pressure`, `lateral_force_vs_slip_angle_by_temperature` and `warm_up_over_a_stint`) show what a given set of parameters does.
+
+**Threads.** A tire with state can be read from several threads (every reader sees a matching temperature and pressure) but must only be updated from one. Use one `Tire` per physical tire, and `copy()` for independent runs.
 
 ## How it works
 
@@ -195,7 +255,7 @@ B = stiffness * (Fz / Fz0) ** n / (C * D)         from the small-slip stiffness
 ## Limitations
 
 - These are the pure-slip magic formulas combined with a friction circle, not the full combined-slip Pacejka formulation. Lateral force does not depend on slip ratio except through the friction circle limit.
-- No camber, inflation pressure, speed, temperature or aligning moment.
+- No camber, speed dependence or aligning moment. Temperature and pressure effects come only from the simple lumped model described above, with a single temperature per tire.
 - The effective friction coefficient follows a power law in load, so it grows without bound as load approaches zero. Peak force still goes to zero.
 - Tire properties are your inputs. The package does not ship measured tire data, so check your coefficients against your own data.
 

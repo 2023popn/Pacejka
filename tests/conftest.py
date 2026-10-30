@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from pacejka import Tire
+from pacejka import PressureParams, ThermalParams, Tire
 
 
 def pytest_addoption(parser):
@@ -60,6 +60,41 @@ def constant_tire():
     return Tire.from_constants(
         "Constant", mu_base=1.5, b_x=8.0, c_x=1.4, e_x=0.1, b_y=9.0, c_y=1.3, e_y=-0.2
     )
+
+
+# A small kart tire in SI units (newtons), used by the temperature and pressure tests.
+# Its thermal and pressure settings are the (placeholder) defaults.
+KART_MU = 1.3
+KART_CORNERING_PER_DEG = 400.0
+KART_LONGITUDINAL = 9000.0
+KART_F_Z0 = 500.0
+KART_LOAD_SENSITIVITY = 0.9
+
+
+def make_kart_tire(thermal=None, pressure=None, **overrides):
+    """A macro-property kart tire in newtons, with optional thermal and pressure models."""
+    settings = dict(
+        compound_name="Test kart",
+        mu_base=KART_MU,
+        cornering_stiffness_per_deg=KART_CORNERING_PER_DEG,
+        longitudinal_stiffness=KART_LONGITUDINAL,
+        load_sensitivity_n=KART_LOAD_SENSITIVITY,
+        f_z0=KART_F_Z0,
+    )
+    settings.update(overrides)
+    return Tire.from_macro_properties(thermal=thermal, pressure=pressure, **settings)
+
+
+@pytest.fixture
+def kart_base():
+    """The kart tire with no temperature or pressure model."""
+    return make_kart_tire()
+
+
+@pytest.fixture
+def kart_tire():
+    """The kart tire with thermal and pressure models, starting cold."""
+    return make_kart_tire(ThermalParams(), PressureParams())
 
 
 # ----------------------------------------------------------------------
