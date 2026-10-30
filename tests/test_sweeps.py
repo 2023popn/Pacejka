@@ -9,7 +9,10 @@ Skipped automatically if matplotlib is not installed; deselect with ``-m "not sw
 import numpy as np
 import pytest
 
-from conftest import F_Z0, LOAD_SENSITIVITY, MU
+from pacejka import PressureParams, ThermalParams, pressure_factors, thermal_factors
+from pacejka.tire_state import gauge_pressure_from_temperature
+
+from conftest import F_Z0, KART_F_Z0, LOAD_SENSITIVITY, MU, make_kart_tire
 
 pytestmark = pytest.mark.sweep
 
@@ -161,3 +164,116 @@ def test_lateral_force_load_grid(r55a, plt, save_sweep):
     assert np.all(grid[0] == 0.0)  # no load, no force
     ten_degrees = grid[:, np.argmin(np.abs(alpha - 10.0))]
     assert np.all(np.diff(ten_degrees) > 0)  # at a fixed angle, more load gives more force
+
+
+# ----------------------------------------------------------------------
+# Temperature and pressure (SI units: kelvin, pascals, newtons)
+# ----------------------------------------------------------------------
+
+K_TO_C = 273.15
+
+
+def test_thermal_factors_vs_temperature(plt, save_sweep):
+    params = ThermalParams()
+    temperature = np.linspace(270.0, 420.0, 301)
+    factors = thermal_factors(temperature, params)
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(temperature - K_TO_C, factors.grip, linewidth=2, label="Peak grip")
+    ax.plot(temperature - K_TO_C, factors.cornering_stiffness, linewidth=2, label="Stiffness")
+    ax.axvline(params.optimal_temperature_k - K_TO_C, color="grey", linestyle=":", label="Optimal")
+    ax.axhline(1.0, color="black", linewidth=0.8)
+    ax.set(title="Thermal factors", xlabel="Tire temperature (°C)", ylabel="Factor (1 = reference)")
+    ax.grid(True, linestyle="--", alpha=0.5)
+    ax.legend()
+    save_sweep(fig, "thermal_factors_vs_temperature")
+
+    assert temperature[np.argmax(factors.grip)] == pytest.approx(params.optimal_temperature_k, abs=1.0)
+    assert np.all(np.diff(factors.cornering_stiffness) < 0)
+
+
+def test_pressure_factors_vs_pressure(plt, save_sweep):
+    params = PressureParams()
+    pressure = np.linspace(30_000.0, 200_000.0, 341)
+    factors = pressure_factors(pressure, params)
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(pressure / 1000, factors.grip, linewidth=2, label="Peak grip")
+    ax.plot(pressure / 1000, factors.cornering_stiffness, linewidth=2, label="Cornering stiffness")
+    ax.plot(pressure / 1000, factors.load_sensitivity, linewidth=2, label="Load sensitivity exponent")
+    ax.axvline(params.optimal_pressure_pa / 1000, color="grey", linestyle=":", label="Optimal")
+    ax.axhline(1.0, color="black", linewidth=0.8)
+    ax.set(title="Pressure factors", xlabel="Gauge pressure (kPa)", ylabel="Factor (1 = reference)")
+    ax.grid(True, linestyle="--", alpha=0.5)
+    ax.legend()
+    save_sweep(fig, "pressure_factors_vs_pressure")
+
+    assert pressure[np.argmax(factors.grip)] == pytest.approx(params.optimal_pressure_pa, abs=1000.0)
+    assert np.all(np.diff(factors.cornering_stiffness) > 0)
+
+
+def test_lateral_force_vs_slip_angle_at_several_temperatures(plt, save_sweep):
+    temperatures = [293.15, 313.15, 333.15, 343.15, 363.15, 393.15]
+    alpha = np.linspace(-20, 20, 401)
+    fig, ax = plt.subplots(figsize=(9, 5))
+
+    peaks, expected = [], []
+    for temperature in temperatures:
+        params = ThermalParams(initial_temperature_k=temperature)
+        tire = make_kart_tire(params)
+        fy = tire.calculate_lateral_force(KART_F_Z0, alpha, alpha_unit="deg")
+        ax.plot(alpha, fy, linewidth=2, label=f"{temperature - K_TO_C:g} °C")
+        peaks.append(fy.max())
+        expected.append(thermal_factors(temperature, params).grip)
+
+        assert fy == pytest.approx(-fy[::-1])
+        assert fy.max() == pytest.approx(tire.calculate_d(KART_F_Z0), rel=1e-3)
+
+    ax.set(
+        title=f"Lateral force vs. slip angle by tire temperature ($F_z$ = {KART_F_Z0:g} N)",
+        xlabel="Slip angle α (deg)",
+        ylabel="Lateral force $F_y$ (N)",
+    )
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.grid(True, linestyle="--", alpha=0.5)
+    ax.legend(title="Tire temperature")
+    save_sweep(fig, "lateral_force_vs_slip_angle_by_temperature")
+
+    # Peak force ranks the same way as the grip factor
+    assert np.argsort(peaks).tolist() == np.argsort(expected).tolist()
+
+
+def test_warm_up_over_a_stint(plt, save_sweep):
+    thermal, pressure = ThermalParams(), PressureParams()
+    tire = make_kart_tire(thermal, pressure)
+
+    dt, duration = 0.25, 400.0
+    steps = int(duration / dt)
+    time = np.arange(steps + 1) * dt
+    temperature = np.empty(steps + 1)
+    gauge = np.empty(steps + 1)
+    peak = np.empty(steps + 1)
+    temperature[0], gauge[0], peak[0] = tire.temperature, tire.pressure, tire.calculate_d(KART_F_Z0)
+
+    for i in range(1, steps + 1):  # steady cornering at 20 m/s
+        tire.update(dt, KART_F_Z0, 0.08, 0.02, 20.0, alpha_unit="rad")
+        temperature[i], gauge[i], peak[i] = tire.temperature, tire.pressure, tire.calculate_d(KART_F_Z0)
+
+    fig, (ax_t, ax_p) = plt.subplots(2, 1, figsize=(9, 7), sharex=True)
+    ax_t.plot(time, temperature - K_TO_C, linewidth=2)
+    ax_t.set(title="Warm-up under steady cornering", ylabel="Tire temperature (°C)")
+    ax_p.plot(time, gauge / 1000, linewidth=2, color="tab:orange")
+    ax_p.set(xlabel="Time (s)", ylabel="Gauge pressure (kPa)")
+    for ax in (ax_t, ax_p):
+        ax.grid(True, linestyle="--", alpha=0.5)
+    save_sweep(fig, "warm_up_over_a_stint")
+
+    assert np.all(np.diff(temperature) > 0)  # still warming at every step
+    assert np.all(np.diff(gauge) > 0)  # and pressure follows
+    assert temperature[-1] - temperature[-81] < 0.5  # but levelling off over the last 20 s
+    assert gauge == pytest.approx(
+        gauge_pressure_from_temperature(
+            temperature, thermal.initial_temperature_k, pressure.fill_pressure_pa
+        )
+    )
+    assert peak[-1] > peak[0]  # the placeholder tire starts below its optimum temperature

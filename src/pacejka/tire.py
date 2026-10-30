@@ -1,10 +1,21 @@
 """Tire force model based on the pacejka "magic formula"."""
 
+import copy as _copy
 from dataclasses import dataclass
 from typing import Optional, Tuple, Union
 
 import numpy as np
 from numpy.typing import ArrayLike
+
+from .tire_state import (
+    DEFAULT_AMBIENT_K,
+    IDENTITY,
+    PressureParams,
+    ThermalParams,
+    TireFactors,
+    TireState,
+    slip_power_w,
+)
 
 # Conversion factor used to turn a stiffness per degree into a stiffness per radian
 DEG_PER_RAD = 180.0 / np.pi
@@ -81,6 +92,15 @@ class Tire:
     broadcast together by numpy, so for example a column of loads and a row of
     slip angles produce a grid of forces.
 
+    A tire can also track its own temperature and pressure. Pass ``thermal``
+    (``ThermalParams``) and/or ``pressure`` (``PressureParams``) and the tire
+    keeps a ``TireState``. The force methods then use its current state without
+    ever changing it, and ``update`` advances the state through time. Without
+    either, the tire behaves exactly as a plain stateless tire. A tire with
+    state must only be updated from one thread at a time: use one ``Tire`` per
+    physical tire, and ``copy`` for independent runs. All state is in SI units
+    (kelvin, gauge pascals, newtons, metres per second).
+
     Attributes:
         name (str): Tire name (intended to be the compound name).
         mu_peak (float): Peak coefficient of friction.
@@ -94,6 +114,10 @@ class Tire:
         constant_b (bool): If True, B is supplied by the user and never recomputed.
         longitudinal (AxisShape): Fixed C, E (and B if constant) for the longitudinal axis.
         lateral (AxisShape): Fixed C, E (and B if constant) for the lateral axis.
+        temperature (Optional[float]): Current temperature in kelvin, or None if the
+            tire has no thermal model.
+        pressure (Optional[float]): Current gauge pressure in pascals, or None if the
+            tire has no pressure parameters.
     """
 
     def __init__(
@@ -111,6 +135,9 @@ class Tire:
         c_y: float = DEFAULT_C,
         e_y: float = DEFAULT_E_LATERAL,
         constant_b: bool = False,
+        thermal: Optional[ThermalParams] = None,
+        pressure: Optional[PressureParams] = None,
+        _stacklevel: int = 3,  # internal: where a pressure-only warning should point
     ):
         self.name = name
         self.mu_peak = mu_peak
@@ -124,6 +151,11 @@ class Tire:
         # depend on the load, so they are computed per request instead.
         self.longitudinal = AxisShape(c=c_x, e=e_x, b=b_x)
         self.lateral = AxisShape(c=c_y, e=e_y, b=b_y)
+
+        # Temperature and pressure, if modeled. The one piece of changing state.
+        self._state: Optional[TireState] = None
+        if thermal is not None or pressure is not None:
+            self._state = TireState(thermal, pressure, stacklevel=_stacklevel)
 
     # ------------------------------------------------------------------
     # Alternate constructors
@@ -140,8 +172,16 @@ class Tire:
         b_y: Optional[float] = None,
         c_y: Optional[float] = None,
         e_y: Optional[float] = None,
+        thermal: Optional[ThermalParams] = None,
+        pressure: Optional[PressureParams] = None,
     ) -> "Tire":
-        """Build a tire from fixed B, C, E constants. Lateral values default to the longitudinal ones."""
+        """
+        Build a tire from fixed B, C, E constants. Lateral values default to the longitudinal ones.
+
+        With ``thermal`` and/or ``pressure``, stiffness effects work by scaling
+        the fixed B values (B is stiffness / (C * D)), so a grip change leaves
+        the small-slip stiffness alone, as it does for ``from_macro_properties``.
+        """
         return cls(
             compound_name,
             mu_base,
@@ -152,6 +192,9 @@ class Tire:
             c_y=c_x if c_y is None else c_y,
             e_y=e_x if e_y is None else e_y,
             constant_b=True,
+            thermal=thermal,
+            pressure=pressure,
+            _stacklevel=4,
         )
 
     @classmethod
@@ -164,12 +207,15 @@ class Tire:
         load_sensitivity_n: float = DEFAULT_LOAD_SENSITIVITY,
         f_z0: float = DEFAULT_REFERENCE_LOAD,
         cornering_stiffness_per_rad: Optional[float] = None,
+        thermal: Optional[ThermalParams] = None,
+        pressure: Optional[PressureParams] = None,
     ) -> "Tire":
         """
         Build a tire from measurable stiffnesses; B is derived from them at each load.
 
         Cornering stiffness can be given per degree or per radian (exactly one of
-        the two). Longitudinal stiffness is required.
+        the two). Longitudinal stiffness is required. ``thermal`` and ``pressure``
+        optionally give the tire a temperature and pressure (see the class docs).
         """
         if cornering_stiffness_per_deg is None and cornering_stiffness_per_rad is None:
             raise ValueError(
@@ -194,6 +240,9 @@ class Tire:
             longitudinal_stiffness=longitudinal_stiffness,
             load_sensitivity_n=load_sensitivity_n,
             f_z0=f_z0,
+            thermal=thermal,
+            pressure=pressure,
+            _stacklevel=4,
         )
 
     # ------------------------------------------------------------------
@@ -230,7 +279,8 @@ class Tire:
         Returns:
             (lateral_force, longitudinal_force)
         """
-        longitudinal, lateral = self.coefficients_at(f_z)
+        factors = self._factors()  # read once, so every step below sees the same state
+        longitudinal, lateral = self._coefficients_at(f_z, factors)
 
         lateral_force = self._magic_formula_core(
             self._slip_angle_to_radians(alpha, alpha_unit), lateral
@@ -238,8 +288,8 @@ class Tire:
         longitudinal_force = self._magic_formula_core(kappa, longitudinal)
 
         if friction_circle:
-            longitudinal_force, lateral_force = self.friction_circle(
-                longitudinal_force, lateral_force, f_z
+            longitudinal_force, lateral_force = self._friction_circle(
+                longitudinal_force, lateral_force, f_z, factors
             )
 
         return lateral_force, longitudinal_force
@@ -258,6 +308,80 @@ class Tire:
         return self._magic_formula_core(self._slip_angle_to_radians(alpha, alpha_unit), lateral)
 
     # ------------------------------------------------------------------
+    # Temperature and pressure
+    # ------------------------------------------------------------------
+
+    @property
+    def temperature(self) -> Optional[float]:
+        """Current temperature in kelvin, or None if the tire has no thermal model."""
+        return None if self._state is None else self._state.temperature_k
+
+    @property
+    def pressure(self) -> Optional[float]:
+        """Current gauge pressure in pascals, or None if the tire has no pressure parameters."""
+        return None if self._state is None else self._state.pressure_pa
+
+    def update(
+        self,
+        dt: float,
+        f_z: float,
+        alpha: float,
+        kappa: float,
+        speed: float,
+        ambient: float = DEFAULT_AMBIENT_K,
+        friction_circle: bool = True,
+        alpha_unit: Optional[str] = None,
+    ) -> None:
+        """
+        Advance the tire's temperature (and the pressure that follows from it) by ``dt``.
+
+        Takes the same conditions as ``calculate_forces``, which it uses to find
+        the power dissipated by sliding, plus the time step and the speed. The
+        conditions are held constant over the step. Does nothing if the tire has
+        no thermal model. Forces are never affected by calling this; they only
+        change through the state this advances.
+
+        Only single numbers are accepted, since a step describes one moment.
+        Forces must be in newtons for the heating to be meaningful.
+
+        Args:
+            dt: Time step in seconds.
+            f_z: Vertical load in newtons.
+            alpha: Slip angle (see ``calculate_forces`` for ``alpha_unit``).
+            kappa: Longitudinal slip ratio.
+            speed: Speed of the tire over the ground in metres per second.
+            ambient: Ambient temperature in kelvin.
+            friction_circle: Whether the forces are limited to the friction circle.
+            alpha_unit: ``"rad"``, ``"deg"`` or None to detect the unit.
+        """
+        if self._state is None or not self._state.is_dynamic:
+            return
+
+        for name, value in (("dt", dt), ("f_z", f_z), ("alpha", alpha), ("kappa", kappa), ("speed", speed)):
+            if np.ndim(value) != 0:
+                raise ValueError(f"update() takes single values, but {name} is an array.")
+
+        lateral_force, longitudinal_force = self.calculate_forces(
+            f_z, alpha, kappa, friction_circle=friction_circle, alpha_unit=alpha_unit
+        )
+        alpha_rad = self._slip_angle_to_radians(alpha, alpha_unit)
+        speed = abs(speed)
+        power = slip_power_w(longitudinal_force, lateral_force, kappa, alpha_rad, speed)
+        self._state.update(dt, power, speed, ambient)
+
+    def reset(self) -> None:
+        """Return the temperature and pressure to their initial values."""
+        if self._state is not None:
+            self._state.reset()
+
+    def copy(self) -> "Tire":
+        """An independent tire with the same settings, starting from the current state."""
+        clone = _copy.copy(self)
+        if self._state is not None:
+            clone._state = self._state.copy()
+        return clone
+
+    # ------------------------------------------------------------------
     # Coefficient calculations
     # ------------------------------------------------------------------
 
@@ -268,17 +392,29 @@ class Tire:
         Build the full B, C, D, E coefficients for each axis at a vertical load.
 
         Nothing is stored on the tire, so this has no side effects and is safe to
-        call from several threads at once.
+        call from several threads at once. If the tire has a temperature and
+        pressure, their current values are applied.
 
         Returns:
             (longitudinal, lateral)
         """
-        d = self.calculate_d(f_z)
+        return self._coefficients_at(f_z, self._factors())
+
+    def _coefficients_at(
+        self, f_z: ArrayLike, factors: TireFactors
+    ) -> Tuple[MagicFormulaCoefficients, MagicFormulaCoefficients]:
+        """``coefficients_at`` with explicit factors, so one request uses one state."""
+        d = self._calculate_d(f_z, factors)
 
         if self.constant_b:
-            b_longitudinal, b_lateral = self.longitudinal.b, self.lateral.b
+            # B is fixed, so a stiffness factor scales B directly. Stiffness is
+            # B * C * D, so B is also divided by the grip factor that scales D.
+            b_longitudinal = self.longitudinal.b * (
+                factors.longitudinal_stiffness / factors.grip
+            )
+            b_lateral = self.lateral.b * (factors.cornering_stiffness / factors.grip)
         else:
-            b_longitudinal, b_lateral = self.calculate_b(f_z, d)
+            b_longitudinal, b_lateral = self._calculate_b(f_z, d, factors)
 
         longitudinal = MagicFormulaCoefficients(
             b=b_longitudinal, c=self.longitudinal.c, d=d, e=self.longitudinal.e
@@ -303,25 +439,29 @@ class Tire:
         If ``load_sensitivity_n`` is None, load sensitivity is skipped and the
         friction coefficient is treated as constant (D = mu_peak * f_z).
         """
+        return self._calculate_d(f_z, self._factors())
+
+    def _calculate_d(self, f_z: ArrayLike, factors: TireFactors) -> FloatOrArray:
+        """``calculate_d`` with explicit factors, so one request uses one state."""
+        mu_peak, _, _, n = self._effective_parameters(factors)
+
         if isinstance(f_z, _SCALAR):  # fast path for a single load
             if f_z <= 0:
                 return 0.0
-            if self.load_sensitivity_n is None:
-                return self.mu_peak * f_z
-            return self.mu_peak * pow(self._load_ratio(f_z), self.load_sensitivity_n - 1) * f_z
+            if n is None:
+                return mu_peak * f_z
+            return mu_peak * pow(self._load_ratio(f_z), n - 1) * f_z
 
         f_z = np.asarray(f_z, dtype=float)
         loaded = f_z > 0
         # Swap unloaded points for 1.0 so the power below never sees 0 or a negative
         safe_f_z = np.where(loaded, f_z, 1.0)
 
-        if self.load_sensitivity_n is None:
-            mu_effective = self.mu_peak
+        if n is None:
+            mu_effective = mu_peak
         else:
             # Peak friction falls off as load rises above the reference load
-            mu_effective = self.mu_peak * pow(
-                self._load_ratio(safe_f_z), self.load_sensitivity_n - 1
-            )
+            mu_effective = mu_peak * pow(self._load_ratio(safe_f_z), n - 1)
         return np.where(loaded, mu_effective * safe_f_z, 0.0)[()]
 
     def calculate_b(
@@ -338,20 +478,28 @@ class Tire:
         Returns:
             (b_longitudinal, b_lateral)
         """
+        return self._calculate_b(f_z, d, self._factors())
+
+    def _calculate_b(
+        self, f_z: ArrayLike, d: FloatOrArray, factors: TireFactors
+    ) -> Tuple[FloatOrArray, FloatOrArray]:
+        """``calculate_b`` with explicit factors, so one request uses one state."""
+        _, cornering_stiffness, longitudinal_stiffness, n = self._effective_parameters(factors)
+
         # Unloaded points have d == 0, which already forces B to 0 below
         if isinstance(f_z, _SCALAR):
             safe_f_z = f_z if f_z > 0 else 1.0
         else:
             f_z = np.asarray(f_z, dtype=float)
             safe_f_z = np.where(f_z > 0, f_z, 1.0)
-        load_scaling = self._load_ratio(safe_f_z) ** self.load_sensitivity_n
+        load_scaling = self._load_ratio(safe_f_z) ** n
 
         # Lateral: B needs the cornering stiffness per radian
-        cornering_stiffness_rad = self.cornering_stiffness_per_rad * load_scaling
+        cornering_stiffness_rad = cornering_stiffness * load_scaling
         b_lateral = self._stiffness_to_b(cornering_stiffness_rad, self.lateral.c, d)
 
         # Longitudinal
-        longitudinal_stiffness = self.longitudinal_stiffness * load_scaling
+        longitudinal_stiffness = longitudinal_stiffness * load_scaling
         b_longitudinal = self._stiffness_to_b(longitudinal_stiffness, self.longitudinal.c, d)
 
         return b_longitudinal, b_lateral
@@ -371,8 +519,14 @@ class Tire:
         Returns:
             (fx_final, fy_final)
         """
+        return self._friction_circle(fx_raw, fy_raw, f_z, self._factors())
+
+    def _friction_circle(
+        self, fx_raw: ArrayLike, fy_raw: ArrayLike, f_z: ArrayLike, factors: TireFactors
+    ) -> Tuple[FloatOrArray, FloatOrArray]:
+        """``friction_circle`` with explicit factors, so one request uses one state."""
         if isinstance(fx_raw, _SCALAR) and isinstance(fy_raw, _SCALAR) and isinstance(f_z, _SCALAR):
-            f_max = self.calculate_d(f_z)  # fast path for single values
+            f_max = self._calculate_d(f_z, factors)  # fast path for single values
             magnitude = np.sqrt(fx_raw ** 2 + fy_raw ** 2)
             if magnitude > f_max and magnitude > 0:
                 scale = f_max / magnitude
@@ -381,7 +535,7 @@ class Tire:
 
         fx_raw = np.asarray(fx_raw, dtype=float)
         fy_raw = np.asarray(fy_raw, dtype=float)
-        f_max = self.calculate_d(f_z)
+        f_max = self._calculate_d(f_z, factors)
         magnitude = np.sqrt(fx_raw ** 2 + fy_raw ** 2)
 
         # Where total demand exceeds physical grip, scale back to the circle boundary
@@ -392,6 +546,40 @@ class Tire:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _factors(self) -> TireFactors:
+        """The factors for the tire's current state (no change if it has none)."""
+        return IDENTITY if self._state is None else self._state.factors()
+
+    def _effective_parameters(
+        self, factors: TireFactors
+    ) -> Tuple[float, Optional[float], Optional[float], Optional[float]]:
+        """
+        The tire parameters with the factors applied.
+
+        Returns:
+            (mu_peak, cornering_stiffness_per_rad, longitudinal_stiffness, load_sensitivity_n).
+            The last three are None where the tire does not define them.
+        """
+        if factors is IDENTITY:
+            return (
+                self.mu_peak,
+                self.cornering_stiffness_per_rad,
+                self.longitudinal_stiffness,
+                self.load_sensitivity_n,
+            )
+
+        cornering = self.cornering_stiffness_per_rad
+        if cornering is not None:
+            cornering = cornering * factors.cornering_stiffness
+        longitudinal = self.longitudinal_stiffness
+        if longitudinal is not None:
+            longitudinal = longitudinal * factors.longitudinal_stiffness
+        n = self.load_sensitivity_n
+        if n is not None:
+            # The exponent may not be pushed above 1 (grip rising with load) by a factor
+            n = min(n * factors.load_sensitivity, max(n, 1.0))
+        return self.mu_peak * factors.grip, cornering, longitudinal, n
 
     def _load_ratio(self, f_z: FloatOrArray) -> FloatOrArray:
         """Vertical load relative to the reference load."""
