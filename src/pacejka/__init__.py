@@ -1,5 +1,7 @@
 """pacejka: tire force calculations using the pacejka magic formula."""
 
+from importlib.metadata import PackageNotFoundError, version
+
 from .tire import AxisShape, MagicFormulaCoefficients, Tire
 from .tire_state import (
     PressureParams,
@@ -13,7 +15,10 @@ from .tire_state import (
     thermal_factors,
 )
 
-__version__ = "0.2.1"
+try:
+    __version__ = version("pacejka")
+except PackageNotFoundError:  # running from a source tree that was never installed
+    __version__ = "unknown"
 
 __all__ = [
     "AxisShape",

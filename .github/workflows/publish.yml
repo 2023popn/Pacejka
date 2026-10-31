@@ -22,6 +22,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          fetch-depth: 0 # setuptools-scm needs the tags to work out the version
 
       - uses: actions/setup-python@v6
         with:
@@ -41,6 +42,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          fetch-depth: 0 # setuptools-scm needs the tags to work out the version
 
       - uses: actions/setup-python@v6
         with:
@@ -48,17 +50,6 @@ jobs:
 
       - name: Install build tools
         run: python -m pip install build twine
-
-      # Stops a release tagged v0.2.0 from uploading a package that says 0.1.0
-      - name: Check the release tag matches the package version
-        if: github.event_name == 'release'
-        run: |
-          version=$(python -c "import re, pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('src/pacejka/__init__.py').read_text()).group(1))")
-          tag="${GITHUB_REF_NAME#v}"
-          if [ "$version" != "$tag" ]; then
-            echo "Release tag '$GITHUB_REF_NAME' does not match package version '$version'."
-            exit 1
-          fi
 
       - name: Build the sdist and wheel
         run: python -m build

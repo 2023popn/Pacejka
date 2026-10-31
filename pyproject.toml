@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools>=77", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -34,8 +34,10 @@ test = ["pytest>=7", "matplotlib>=3.5"]
 Homepage = "https://github.com/2023popn/Pacejka"
 Issues = "https://github.com/2023popn/Pacejka/issues"
 
-[tool.setuptools.dynamic]
-version = { attr = "pacejka.__version__" }
+# The version comes from the git tag (v0.3.0 -> 0.3.0). Untagged commits get a
+# .devN version, and the local "+g<hash>" part is dropped so TestPyPI accepts it.
+[tool.setuptools_scm]
+local_scheme = "no-local-version"
 
 [tool.setuptools.packages.find]
 where = ["src"]
